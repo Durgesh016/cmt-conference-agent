@@ -1,0 +1,12 @@
+# Secrets and the saved login session: never commit these
+.env
+.auth/
+
+# Results and logs (logs/debug can contain pages from your logged-in account)
+output/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/

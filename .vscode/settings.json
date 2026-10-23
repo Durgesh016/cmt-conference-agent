@@ -1,0 +1,4 @@
+{
+    // The Python that has this project's requirements installed (VS Code's Run button and hints use it).
+    "python.defaultInterpreterPath": "C:\\Users\\Durgesh\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
+}
