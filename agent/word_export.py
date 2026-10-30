@@ -23,12 +23,13 @@ from .models import Conference
 # (header, Conference field, width in cm); widths fill A4 landscape inside 1.27 cm margins.
 # The short name isn't a column of its own: it is the end of every CMT link.
 COLUMNS = (
-    ("Name", "name", 8.5),
+    ("Name", "name", 7.0),
     ("Start", "start_date", 1.9),
     ("End", "end_date", 1.9),
-    ("Location", "location", 3.8),
-    ("CMT link", "cmt_url", 6.2),
-    ("Website", "external_url", 4.86),
+    ("Location", "location", 3.5),
+    ("CMT link", "cmt_url", 5.5),
+    ("Website", "external_url", 3.86),
+    ("Keywords", "keywords", 3.5),
 )
 LINK_FIELDS = {"cmt_url", "external_url"}
 HEADER_FILL = "D9E2F3"

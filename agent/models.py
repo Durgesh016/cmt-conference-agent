@@ -22,6 +22,7 @@ class Conference:
     country: str = ""
     contact_url: str = ""  # CMT "Email Chairs" form (My Conferences only)
     lists: str = ""  # which CMT tab(s) listed it: "all", "my" or "my+all"
+    keywords: str = ""  # comma-separated topic keywords extracted from name/topics
 
     @property
     def key(self) -> str:

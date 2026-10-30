@@ -59,7 +59,29 @@ def _write_csv(conferences: list[Conference], path: Path, meta: dict) -> bool:
         writer.writeheader()
         for conference in conferences:
             writer.writerow({key: csv_safe(value) for key, value in asdict(conference).items()})
+    _write_keywords_expanded(conferences, path)
     return True
+
+
+def _write_keywords_expanded(conferences: list[Conference], base_path: Path) -> None:
+    """Write a companion CSV with one row per (conference, keyword) pair."""
+    kw_path = base_path.parent / (base_path.stem + "_by_keyword.csv")
+    fieldnames_kw = FIELDNAMES + ["keyword"]
+    try:
+        with kw_path.open("w", newline="", encoding="utf-8-sig") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames_kw)
+            writer.writeheader()
+            for conference in conferences:
+                base_row = {key: csv_safe(value) for key, value in asdict(conference).items()}
+                kws = [kw.strip() for kw in conference.keywords.split(",") if kw.strip()]
+                if kws:
+                    for kw in kws:
+                        writer.writerow({**base_row, "keyword": csv_safe(kw)})
+                else:
+                    writer.writerow({**base_row, "keyword": ""})
+        log.info("Keywords-expanded CSV written: %s", kw_path.name)
+    except OSError as exc:
+        log.warning("Could not write keywords CSV %s: %s", kw_path, exc)
 
 
 def _write_json(conferences: list[Conference], path: Path, meta: dict) -> bool:

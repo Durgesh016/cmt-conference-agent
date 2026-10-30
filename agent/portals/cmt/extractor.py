@@ -25,9 +25,11 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from agent.compliance import AuditLog, RateLimiter, open_page
 from agent.config import CONFERENCE_LIST_PATH, Settings
 from agent.errors import ExtractionError, LoginError
+from agent.keywords import extract_keywords
 from agent.models import (
     Conference,
     as_date,
+    clean_text,
     conference_from_api,
     matches_filter,
     merge_sources,
@@ -39,6 +41,30 @@ from agent.models import (
 from .auth import is_login_url
 
 log = logging.getLogger(__name__)
+
+# Only visit individual conference pages for keyword fallback when the result set is small
+_FETCH_DESC_THRESHOLD = 200
+
+# JS to scrape a conference's own page for description / topics text
+_READ_CONF_PAGE_JS = """
+() => {
+    const clean = s => (s || "").replace(/\\s+/g, " ").trim();
+    const parts = [];
+    const meta = document.querySelector('meta[name="description"]');
+    if (meta) { const c = meta.getAttribute('content'); if (c) parts.push(clean(c)); }
+    for (const sel of ['[class*=descript]', '[class*=topic]', '[class*=about]',
+                        'main p', 'article p', '.col-md-8 p', '.content p']) {
+        for (const el of document.querySelectorAll(sel)) {
+            const t = clean(el.textContent);
+            if (t.length > 40) { parts.push(t.substring(0, 600)); if (parts.length >= 5) break; }
+        }
+        if (parts.length >= 5) break;
+    }
+    if (!parts.length && document.body)
+        parts.push(clean(document.body.innerText).substring(0, 2000));
+    return parts.join(" ").substring(0, 3000);
+}
+"""
 
 TABS = {"my": "My Conferences", "all": "All Conferences"}
 ENTITY_SETS = {"my": "MyConferences", "all": "Conferences"}
@@ -103,6 +129,7 @@ class ConferenceListAgent:
         self._loaded: dict[str, dict[str, Conference]] = {tab: {} for tab in TABS}
         self._api_totals: dict[str, int] = {}
         self._inflight: dict[Request, float] = {}
+        self._descriptions: dict[str, str] = {}  # conference key → description text from API
         self._active_tab = "my"
         page.on("request", self._on_request)
         page.on("requestfinished", self._on_request_done)
@@ -141,6 +168,13 @@ class ConferenceListAgent:
                 conference = conference_from_api(item, self.settings.base_url)
                 if conference.key:
                     store.setdefault(conference.key, conference)
+                    # Capture any description/topics the API returns (field names vary)
+                    lowered = {str(k).lower(): v for k, v in item.items()}
+                    for df in ("description", "topics", "topicsofinterest", "abstract", "about", "callforpapers"):
+                        val = clean_text(lowered.get(df, ""))
+                        if val:
+                            self._descriptions.setdefault(conference.key, val)
+                            break
         total = payload.get("@odata.count")
         if isinstance(total, int):
             self._api_totals[tab] = total
@@ -316,9 +350,38 @@ class ConferenceListAgent:
     def collect(self, tab: str) -> list[Conference]:
         rows = self.read_table() if tab == self._active_tab else []
         merged = merge_sources(rows, self._api_conferences(tab))
-        conferences = [replace(c, lists=tab) for c in merged if matches_filter(c, self.search)]
+        filtered = [c for c in merged if matches_filter(c, self.search)]
+
+        # Only visit individual conference pages as a fallback when the result set is small
+        do_page_fallback = len(filtered) <= _FETCH_DESC_THRESHOLD
+
+        conferences = []
+        for c in filtered:
+            desc = self._descriptions.get(c.key, "")
+            kw = extract_keywords(c.name, desc)
+            if not kw and do_page_fallback and c.cmt_url:
+                log.debug("No keywords from name for %r — fetching conference page.", c.name)
+                page_desc = self._fetch_description(c.cmt_url)
+                kw = extract_keywords(c.name, page_desc)
+            conferences.append(replace(c, lists=tab, keywords=kw))
+
         log.info("%s: %d conference(s) (%d from the table).", TABS[tab], len(conferences), len(rows))
         return conferences
+
+    def _fetch_description(self, url: str) -> str:
+        """Open a new tab, navigate to the conference page, and return its description text."""
+        try:
+            extra = self.page.context.new_page()
+            try:
+                self.rate.wait("fetching conference description")
+                extra.goto(url, wait_until="domcontentloaded", timeout=15_000)
+                extra.wait_for_timeout(800)
+                return extra.evaluate(_READ_CONF_PAGE_JS) or ""
+            finally:
+                extra.close()
+        except Exception as exc:
+            log.debug("Could not fetch description from %s: %s", url, exc)
+            return ""
 
     def save_debug_snapshot(self, reason: str) -> Path:
         folder = self.settings.log_dir / "debug"
